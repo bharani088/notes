@@ -1,110 +1,132 @@
-# Get Started
-
-TensorFlow provides multiple APIs. 
-
-The lowest level API --TensorFlow Core-- provides you with complete programming control. We recommend TensorFlow Core for machine learning researchers and others who require fine levels of control over their models. 
-
-The higher level APIs are built on top of TensorFlow Core. These higher level APIs are typically easier to learn and use than TensorFlow Core. In addition, the higher level APIs make repetitive tasks easier and more consistent between different users. A high-level API like tf.estimator helps you manage data sets, estimators, training and inference.
-
-**Tensors**: A tensor consists of a set of primitive values shaped into an array of any number of dimensions. A tensor's rank is its number of dimensions. 
-```python
-3 # a rank 0 tensor; a scalar with shape []
-[1., 2., 3.] # a rank 1 tensor; a vector with shape [3]
-[[1., 2., 3.], [4., 5., 6.]] # a rank 2 tensor; a matrix with shape [2, 3]
-[[[1., 2., 3.]], [[7., 8., 9.]]] # a rank 3 tensor with shape [2, 1, 3]
-```
-
-**The Computational Graph**: A computational graph is a series of TensorFlow operations arranged into a graph of nodes. Each node takes zero or more tensors as inputs and produces a tensor as an output.
-
-A graph can be parameterized to accept external inputs, known as **placeholders**. A placeholder is a promise to provide a value later.
-
-We can evaluate this graph with multiple inputs by using the `feed_dict` argument to the `run` method to feed concrete values to the placeholders.
-> Important: This tensor will produce an error if evaluated. Its value must be fed using the `feed_dict` optional argument to `Session.run()`, `Tensor.eval()`, or `Operation.run()`.
-
-To make the model trainable, we need to be able to modify the graph to get new outputs with the same input. **Variables** allow us to add trainable parameters to a graph.
-
-Constants are initialized when you call `tf.constant`, and their value can never change. By contrast, variables are not initialized when you call `tf.Variable`. To initialize all the variables:
-```python
-init = tf.global_variables_initializer()
-sess.run(init)
-```
-
-
-
-# Programmers Guide
-
-## Importing Data
-
-The `Dataset` API enables you to build complex input pipelines from simple, reusable pieces, makes it easy to deal with large amounts of data, different data formats, and complicated transformations.
-
-* A `tf.data.Dataset` represents a sequence of elements, in which each element contains one or more `Tensor` objects. (e.g. in an image pipeline, an element might be a single training example, with a pair of tensors representing the image data and a label)
-* 
-
 # Tutorials
 
-# Python API Guides
-> <https://www.tensorflow.org/api_guides/python/>
+## Sequences
 
-## Reading Data
+### Language Modeling
 
-There are three other methods of getting data into a TensorFlow program: Feeding, Reading from files, and Preloaded data.
+>  <https://github.com/tensorflow/models/blob/master/tutorials/rnn/ptb/ptb_word_lm.py>
 
-### Feeding
+![](https://raw.githubusercontent.com/torch/torch.github.io/master/blog/_posts/images/rnnlm.png)
 
-TensorFlow's feed mechanism lets you inject data into any Tensor in a computation graph.
+#### The Model
 
-A placeholder exists solely to serve as the target of feeds. It is not initialized and contains no data.
-Supply feed data through the `feed_dict` argument to a `run()` or `eval()` call that initiates computation.
+##### LSTM
 
-```python
-with tf.Session():
-  input = tf.placeholder(tf.float32)
-  classifier = ...
-  print(classifier.eval(feed_dict={input: my_python_preprocessing_fn()}))
+The core of the model consists of an LSTM cell that processes one word at a time and computes probabilities of the possible values for the next word in the sentence. The memory state of the network is initialized with a vector of zeros and gets updated after reading each word. **For computational reasons, we will process data in mini-batches of size batch_size. In this example, it is important to note that current_batch_of_words does not correspond to a "sentence" of words. Every word in a batch should correspond to a time t.** TensorFlow will automatically sum the gradients of each batch for you.
+
+```py
+ t=0  t=1    t=2  t=3     t=4
+[The, brown, fox, is,     quick]
+[The, red,   fox, jumped, high]
+
+words_in_dataset[0] = [The, The]
+words_in_dataset[1] = [brown, red]
+words_in_dataset[2] = [fox, fox]
+words_in_dataset[3] = [is, jumped]
+words_in_dataset[4] = [quick, high]
+batch_size = 2, time_steps = 5
 ```
 
-> Note: "Feeding" is the least efficient way to feed data into a tensorflow program and should only be used for small experiments and debugging.
+The basic pseudocode
 
-### Reading from files
+```py
+words_in_dataset = tf.placeholder(tf.float32, [time_steps, batch_size, num_features])
+lstm = tf.contrib.rnn.BasicLSTMCell(lstm_size)
+# Initial state of the LSTM memory.
+hidden_state = tf.zeros([batch_size, lstm.state_size])
+current_state = tf.zeros([batch_size, lstm.state_size])
+state = hidden_state, current_state
+probabilities = []
+loss = 0.0
+for current_batch_of_words in words_in_dataset:
+    # The value of state is updated after processing each batch of words.
+    output, state = lstm(current_batch_of_words, state)
 
-An input pipeline reads the data from files at the beginning of a TensorFlow graph.
-
-Pass the list of filenames to the `tf.train.string_input_producer` function. (a FIFO queue)
-
-e.g. Read csv files with `tf.TextLineReader` and the `tf.decode_csv`.
-```python
-filename_queue = tf.train.string_input_producer(["file0.csv", "file1.csv"])
-
-reader = tf.TextLineReader()
-key, value = reader.read(filename_queue)
-
-# Default values, in case of empty columns. Also specifies the type of the
-# decoded result.
-record_defaults = [[1], [1], [1], [1], [1]]
-col1, col2, col3, col4, col5 = tf.decode_csv(
-    value, record_defaults=record_defaults)
-features = tf.stack([col1, col2, col3, col4])
-
-with tf.Session() as sess:
-  # Start populating the filename queue.
-  coord = tf.train.Coordinator()
-  threads = tf.train.start_queue_runners(coord=coord)
-
-  for i in range(1200):
-    # Retrieve a single instance:
-    example, label = sess.run([features, col5])
-
-  coord.request_stop()
-  coord.join(threads)
+    # The LSTM output can be used to make next word predictions
+    logits = tf.matmul(output, softmax_w) + softmax_b
+    probabilities.append(tf.nn.softmax(logits))
+    loss += loss_function(probabilities, target_words)
 ```
 
-> Many of the `tf.train` functions listed above add `tf.train.QueueRunner` objects to your graph. These require that you call `tf.train.start_queue_runners` before running any training or inference steps, or it will hang forever. This will start threads that run the input pipeline, filling the example queue so that the dequeue to get the examples will succeed. This is best combined with a `tf.train.Coordinator` to cleanly shut down these threads when there are errors.
+##### Truncated Backpropagation
 
-### Preloaded data
+By design, the output of a recurrent neural network (RNN) depends on arbitrarily distant inputs. Unfortunately, this makes backpropagation computation difficult. **In order to make the learning process tractable, it is common practice to create an "unrolled" version of the network, which contains a fixed number (num_steps) of LSTM inputs and outputs.** The model is then trained on this finite approximation of the RNN. This can be implemented by feeding inputs of length num_steps at a time and performing a backward pass after each such input block.
 
-This is only used for small data sets that can be loaded entirely in memory. There are two approaches:
-* Store the data in a constant.
-* Store the data in a variable, that you initialize (or assign to) and then never change. (trainable=False)
+```py
+# Placeholder for the inputs in a given iteration.
+words = tf.placeholder(tf.int32, [batch_size, num_steps])
+
+lstm = tf.contrib.rnn.BasicLSTMCell(lstm_size)
+# Initial state of the LSTM memory.
+initial_state = state = tf.zeros([batch_size, lstm.state_size])
+
+for i in range(num_steps):
+    # The value of state is updated after processing each batch of words.
+    output, state = lstm(words[:, i], state)
+
+    # The rest of the code.
+    # ...
+
+final_state = state
 
 
-## Neural Network
+# A numpy array holding the state of LSTM after each batch of words.
+numpy_state = initial_state.eval()
+total_loss = 0.0
+for current_batch_of_words in words_in_dataset:
+    numpy_state, current_loss = session.run([final_state, loss],
+        # Initialize the LSTM state from the previous iteration.
+        feed_dict={initial_state: numpy_state, words: current_batch_of_words})
+    total_loss += current_loss
+```
+
+##### Inputs
+
+The word IDs will be embedded into a dense representation (see the Vector Representations Tutorial) before feeding to the LSTM.
+
+```py
+# embedding_matrix is a tensor of shape [vocabulary_size, embedding size]
+word_embeddings = tf.nn.embedding_lookup(embedding_matrix, word_ids)
+```
+
+##### Loss Function
+
+`tf.contrib.seq2seq.sequence_loss`
+
+##### Stacking multiple LSTMs
+
+To give the model more expressive power, we can add multiple layers of LSTMs to process the data. The output of the first layer will become the input of the second and so on.
+
+![](https://i.stack.imgur.com/JLPO1.png)
+
+```py
+stacked_lstm = tf.nn.rnn_cell.MultiRNNCell([tf.nn.rnn_cell.BasicRNNCell(state_size)] * num_layers)
+
+initial_state = state = stacked_lstm.zero_state(batch_size, tf.float32)
+for i in range(num_steps):
+    # The value of state is updated after processing each batch of words.
+    output, state = stacked_lstm(words[:, i], state)
+
+    # The rest of the code.
+    # ...
+
+final_state = state
+```
+
+##### 关于使用dropout
+```py
+# 对输入
+if is_training and config.keep_prob < 1:
+      inputs = tf.nn.dropout(inputs, config.keep_prob)
+
+# 对中间的输入和输出
+def make_cell():
+      cell = self._get_lstm_cell(config, is_training)
+      if is_training and config.keep_prob < 1:
+        cell = tf.contrib.rnn.DropoutWrapper(
+            cell, output_keep_prob=config.keep_prob)
+      return cell
+```
+
+
+### Neural Machine Translation (seq2seq) Tutorial
